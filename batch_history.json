@@ -1,0 +1,14 @@
+[
+    {
+        "id": "batch_68ae36e5da0881908c10273eda147631",
+        "provider": "openai",
+        "status": "running",
+        "submitted_at": "2025-08-26T18:36:22.208857",
+        "requests": [
+            {
+                "custom_id": "req_20250826_183619",
+                "prompt_text": "Traduit en espagnol"
+            }
+        ]
+    }
+]
