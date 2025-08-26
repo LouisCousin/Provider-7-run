@@ -241,13 +241,42 @@ def generer_export_docx(
     # Section principale : prompts et réponses
     for item in succeeded:
         prompt_text = item.get("prompt_text", "")
-        response_text = item.get("clean_response") or item.get("response", "")
-
         para = converter.doc.add_paragraph()
         run = para.add_run(prompt_text)
         converter._apply_style(run, style_name="prompt")
 
-        converter.add_markdown(response_text)
+        reponse_structuree = item.get("structured_response")
+        if reponse_structuree:
+            for bloc in reponse_structuree:
+                bloc_type = bloc.get("type", "paragraph")
+                if bloc_type == "list":
+                    for li in bloc.get("items", []):
+                        converter.doc.add_paragraph(li, style="List Bullet")
+                    continue
+                if bloc_type == "table":
+                    rows = bloc.get("rows", [])
+                    if rows:
+                        table = converter.doc.add_table(rows=len(rows), cols=len(rows[0]))
+                        for r_idx, row in enumerate(rows):
+                            for c_idx, cell_text in enumerate(row):
+                                p = table.cell(r_idx, c_idx).paragraphs[0]
+                                r = p.add_run(cell_text)
+                                converter._apply_style(r)
+                    continue
+
+                if bloc_type.startswith("heading_"):
+                    level = int(bloc_type.split("_")[-1])
+                    p = converter.doc.add_heading(level=level)
+                else:
+                    p = converter.doc.add_paragraph()
+
+                for run_data in bloc.get("runs", []):
+                    r = p.add_run(run_data.get("text", ""))
+                    converter._apply_style(r, run_data.get("style"), style_name="response")
+        else:
+            response_text = item.get("clean_response") or item.get("response", "")
+            converter.add_markdown(response_text)
+
         converter.doc.add_paragraph()
 
     # Section annexe pour les erreurs

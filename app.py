@@ -148,9 +148,11 @@ def formater_contenu_en_texte(contenu: List[Dict]) -> str:
         bloc_type = bloc.get("type", "")
         if bloc_type.startswith("heading"):
             niveau = bloc_type.split("_")[-1]
-            lignes_texte.append(f"{'#' * int(niveau)} {bloc.get('text', '')}")
+            texte_complet = "".join(run.get("text", "") for run in bloc.get("runs", []))
+            lignes_texte.append(f"{'#' * int(niveau)} {texte_complet}")
         elif bloc_type == "paragraph":
-            lignes_texte.append(bloc.get("text", ""))
+            texte_complet = "".join(run.get("text", "") for run in bloc.get("runs", []))
+            lignes_texte.append(texte_complet)
         elif bloc_type == "list":
             for item in bloc.get("items", []):
                 lignes_texte.append(f"* {item}")
