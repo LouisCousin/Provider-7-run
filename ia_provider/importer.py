@@ -20,27 +20,18 @@ logging.basicConfig(
 )
 
 
-def _extraire_style_paragraphe(para: Paragraph) -> Optional[Dict[str, Any]]:
-    """Extrait les informations de style du premier run d'un paragraphe.
+def _extraire_style_run(run) -> Dict[str, Any]:
+    """Extrait les informations de style d'un segment de texte (run)."""
 
-    Retourne un dictionnaire contenant les attributs principaux de police ou ``None``
-    si aucune information n'est disponible (paragraphe vide, etc.).
-    """
-    try:
-        premier_run = para.runs[0]
-        font = premier_run.font
-
-        couleur_rgb = font.color.rgb if font.color and font.color.rgb else None
-
-        return {
-            "font_name": font.name,
-            "font_size": font.size.pt if font.size else None,
-            "is_bold": font.bold,
-            "is_italic": font.italic,
-            "font_color_rgb": str(couleur_rgb) if couleur_rgb else None,
-        }
-    except IndexError:
-        return None
+    font = run.font
+    couleur_rgb = font.color.rgb if font.color and font.color.rgb else None
+    return {
+        "font_name": font.name,
+        "font_size": font.size.pt if font.size else None,
+        "is_bold": font.bold,
+        "is_italic": font.italic,
+        "font_color_rgb": str(couleur_rgb) if couleur_rgb else None,
+    }
 
 
 def analyser_docx(
@@ -49,9 +40,9 @@ def analyser_docx(
     """Extrait le contenu structuré d'un DOCX avec les styles associés.
 
     Retourne ``(contenu_structure, None)`` où ``contenu_structure`` est une liste de
-    dictionnaires décrivant chaque bloc de contenu du document (paragraphes, titres,
-    listes ou tableaux). Chaque bloc de paragraphe ou de titre inclut un dictionnaire
-    ``style`` décrivant sa mise en forme.
+    dictionnaires décrivant chaque bloc du document. Les paragraphes et titres ne
+    contiennent plus un simple texte, mais une liste de ``runs`` avec leur style
+    associé.
     """
     try:
         file_stream.seek(0)
@@ -94,10 +85,18 @@ def analyser_docx(
                     block_type = "heading_6"
 
                 if block.text.strip():
-                    style_info = _extraire_style_paragraphe(block)
-                    contenu_structure.append(
-                        {"type": block_type, "text": block.text, "style": style_info}
-                    )
+                    runs_data = []
+                    for run in block.runs:
+                        if run.text.strip():
+                            runs_data.append(
+                                {
+                                    "text": run.text,
+                                    "style": _extraire_style_run(run),
+                                }
+                            )
+
+                    if runs_data:
+                        contenu_structure.append({"type": block_type, "runs": runs_data})
 
             elif isinstance(block, Table):
                 table_data: List[List[str]] = []
