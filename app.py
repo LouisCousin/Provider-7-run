@@ -14,7 +14,7 @@ import streamlit as st
 import os
 import json
 from datetime import datetime
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Any, Union
 from dataclasses import asdict
 
 # Import du module IA Provider (changement d'import)
@@ -142,10 +142,27 @@ def hex_to_rgb(hex_color: str) -> tuple:
     return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
 
 
-def formater_contenu_en_texte(contenu: List[Dict]) -> str:
-    """Convertit la structure de données en une chaîne de texte formatée."""
+def formater_contenu_en_texte(contenu: Union[List[Dict[str, Any]], Dict[str, Any]]) -> str:
+    """Convertit la structure de données en une chaîne de texte formatée.
+
+    Accepte soit une liste de blocs (compatibilité ascendante), soit un dictionnaire
+    contenant les clés ``body``, ``header`` et ``footer``.
+    """
+
+    if isinstance(contenu, dict):
+        body = contenu.get("body", [])
+        header = contenu.get("header", "")
+        footer = contenu.get("footer", "")
+    else:
+        body = contenu
+        header = ""
+        footer = ""
+
     lignes_texte: List[str] = []
-    for bloc in contenu:
+    if header:
+        lignes_texte.append("=== HEADER ===")
+        lignes_texte.append(header)
+    for bloc in body:
         bloc_type = bloc.get("type", "")
         if bloc_type.startswith("heading"):
             niveau = bloc_type.split("_")[-1]
@@ -160,6 +177,9 @@ def formater_contenu_en_texte(contenu: List[Dict]) -> str:
         elif bloc_type == "table":
             for ligne in bloc.get("rows", []):
                 lignes_texte.append(" | ".join(ligne))
+    if footer:
+        lignes_texte.append("=== FOOTER ===")
+        lignes_texte.append(footer)
     return "\n".join(lignes_texte)
 
 
@@ -453,14 +473,14 @@ uploaded_file = st.file_uploader(
 
 prompt_final = user_instruction
 prompt_text = user_instruction
-contenu_structure = None
+document_content = None
 
 if uploaded_file is not None:
-    contenu_structure, template_styles = importer.analyser_document(uploaded_file)
+    document_content, template_styles = importer.analyser_document(uploaded_file)
     st.session_state.source_template_styles = template_styles
 
-    if isinstance(contenu_structure, list):
-        json_structure_str = json.dumps(contenu_structure, ensure_ascii=False, indent=2)
+    if isinstance(document_content, dict):
+        json_structure_str = json.dumps(document_content, ensure_ascii=False, indent=2)
         prompt_final = (
             "Ta tâche est de traduire le contenu textuel d'un document structuré en JSON.\n"
             f"Instruction de l'utilisateur : \"{user_instruction}\"\n"
@@ -478,7 +498,7 @@ if uploaded_file is not None:
                 "💡 Style du document source détecté. La mise en forme sera conservée au mieux."
             )
     else:
-        texte_a_traiter = contenu_structure
+        texte_a_traiter = document_content
         prompt_final = (
             "Voici une instruction à appliquer sur le contenu d'un document.\n\n"
             f'Instruction de l\'utilisateur : "{user_instruction}"\n\n'
@@ -578,16 +598,23 @@ if generate_button:
                 st.success("✅ Réponse générée avec succès!")
 
                 reponse_structuree = None
-                if uploaded_file is not None and isinstance(contenu_structure, list):
+                if uploaded_file is not None and isinstance(document_content, dict):
                     try:
                         reponse_structuree = json.loads(response)
                     except json.JSONDecodeError:
                         st.error(
                             "L'IA n'a pas retourné une structure valide. Affichage de la réponse brute."
                         )
-                        reponse_structuree = [
-                            {"type": "paragraph", "runs": [{"text": response, "style": None}]}
-                        ]
+                        reponse_structuree = {
+                            "body": [
+                                {
+                                    "type": "paragraph",
+                                    "runs": [{"text": response, "style": None}],
+                                }
+                            ],
+                            "header": "",
+                            "footer": "",
+                        }
 
                 with st.container():
                     st.markdown("### 🤖 Réponse")
