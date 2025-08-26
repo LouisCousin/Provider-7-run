@@ -327,26 +327,67 @@ def _appliquer_style_run(run: Run, style: Dict[str, Any] | None, base_style: Dic
     run.italic = style_combined.get("is_italic", False)
 
 
+def _reconstruire_bloc(parent, bloc: Dict[str, Any], base_style: Dict[str, Any]) -> None:
+    """Reconstruit un bloc (paragraphe, liste, tableau, titre) dans le conteneur donné."""
+
+    type_bloc = bloc.get("type", "paragraph")
+
+    if type_bloc == "list":
+        for item in bloc.get("items", []):
+            parent.add_paragraph(item, style="List Bullet")
+        return
+
+    if type_bloc == "table":
+        rows = bloc.get("rows", [])
+        if rows:
+            table = parent.add_table(rows=len(rows), cols=len(rows[0]))
+            for r_idx, row in enumerate(rows):
+                for c_idx, cell_text in enumerate(row):
+                    p = table.cell(r_idx, c_idx).paragraphs[0]
+                    run = p.add_run(cell_text)
+                    _appliquer_style_run(run, None, base_style)
+        return
+
+    if type_bloc.startswith("heading"):
+        try:
+            level = int(type_bloc.split("_")[-1])
+        except Exception:
+            level = 1
+        p = parent.add_paragraph(style=f"Heading {level}")
+    else:
+        p = parent.add_paragraph()
+
+    for run_data in bloc.get("runs", []):
+        run = p.add_run(run_data.get("text", ""))
+        _appliquer_style_run(run, run_data.get("style"), base_style)
+
+
 def _inserer_table_des_matieres(document: Document) -> None:
-    """Insère un champ de table des matières au début du document."""
-    paragraph = document.add_paragraph()
-    run = paragraph.add_run()
+    """Insère un champ de table des matières avec un titre au début du document."""
+
+    if document.paragraphs:
+        document.paragraphs[0].insert_paragraph_before("Table des Matières", style="Title")
+    else:
+        document.add_paragraph("Table des Matières", style="Title")
+
+    p_champ = document.add_paragraph()
+    run = p_champ.add_run()
     fld_char = OxmlElement("w:fldChar")
     fld_char.set(qn("w:fldCharType"), "begin")
     run._r.append(fld_char)
 
-    run = paragraph.add_run()
+    run = p_champ.add_run()
     instr_text = OxmlElement("w:instrText")
     instr_text.set(qn("xml:space"), "preserve")
     instr_text.text = 'TOC \\o "1-3" \\h \\z \\u'
     run._r.append(instr_text)
 
-    run = paragraph.add_run()
+    run = p_champ.add_run()
     fld_char = OxmlElement("w:fldChar")
     fld_char.set(qn("w:fldCharType"), "end")
     run._r.append(fld_char)
 
-    document._body._element.insert(0, paragraph._p)
+    document._body._element.insert(1, p_champ._p)
 
 
 def generer_export_docx(
@@ -361,59 +402,23 @@ def generer_export_docx(
     document = Document()
     base_style = styles_interface.get("response", {})
 
-    body = reponse_structuree.get("body", [])
-    for bloc in body:
-        type_bloc = bloc.get("type", "paragraph")
-
-        if type_bloc == "list":
-            for item in bloc.get("items", []):
-                document.add_paragraph(item, style="List Bullet")
-            continue
-
-        if type_bloc == "table":
-            rows = bloc.get("rows", [])
-            if rows:
-                table = document.add_table(rows=len(rows), cols=len(rows[0]))
-                for r_idx, row in enumerate(rows):
-                    for c_idx, cell_text in enumerate(row):
-                        p = table.cell(r_idx, c_idx).paragraphs[0]
-                        run = p.add_run(cell_text)
-                        _appliquer_style_run(run, None, base_style)
-            continue
-
-        if type_bloc.startswith("heading"):
-            try:
-                level = int(type_bloc.split("_")[-1])
-            except Exception:
-                level = 1
-            p = document.add_heading(level=level)
-        else:
-            p = document.add_paragraph()
-
-        for run_data in bloc.get("runs", []):
-            run = p.add_run(run_data.get("text", ""))
-            _appliquer_style_run(run, run_data.get("style"), base_style)
-
-    header_text = reponse_structuree.get("header")
-    footer_text = reponse_structuree.get("footer")
-    if header_text:
-        for section in document.sections:
-            paragraph = (
-                section.header.paragraphs[0]
-                if section.header.paragraphs
-                else section.header.add_paragraph()
-            )
-            paragraph.text = header_text
-    if footer_text:
-        for section in document.sections:
-            paragraph = (
-                section.footer.paragraphs[0]
-                if section.footer.paragraphs
-                else section.footer.add_paragraph()
-            )
-            paragraph.text = footer_text
+    header_structure = reponse_structuree.get("header", [])
+    if header_structure:
+        header = document.sections[0].header
+        for bloc in header_structure:
+            _reconstruire_bloc(header, bloc, base_style)
 
     _inserer_table_des_matieres(document)
+
+    body = reponse_structuree.get("body", [])
+    for bloc in body:
+        _reconstruire_bloc(document, bloc, base_style)
+
+    footer_structure = reponse_structuree.get("footer", [])
+    if footer_structure:
+        footer = document.sections[0].footer
+        for bloc in footer_structure:
+            _reconstruire_bloc(footer, bloc, base_style)
 
     output = io.BytesIO()
     document.save(output)

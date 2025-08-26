@@ -34,105 +34,108 @@ def _extraire_style_run(run) -> Dict[str, Any]:
     }
 
 
+def _iter_block_items(parent):
+    """Yield paragraphs and tables from *parent* in document order."""
+
+    parent_element = getattr(parent.element, "body", parent.element)
+    for child in parent_element.iterchildren():
+        if isinstance(child, CT_P):
+            yield Paragraph(child, parent)
+        elif isinstance(child, CT_Tbl):
+            yield Table(child, parent)
+
+
+def _analyser_contenu_block(parent) -> List[Dict[str, Any]]:
+    """Analyse un conteneur (document, header, footer) et retourne la structure des blocs."""
+
+    contenu_structure: List[Dict[str, Any]] = []
+    for block in _iter_block_items(parent):
+        if isinstance(block, Paragraph):
+            style_name = (
+                block.style.name.lower() if block.style and block.style.name else ""
+            )
+            if "list" in style_name or "liste" in style_name:
+                if block.text.strip():
+                    if contenu_structure and contenu_structure[-1]["type"] == "list":
+                        contenu_structure[-1]["items"].append(block.text)
+                    else:
+                        contenu_structure.append({"type": "list", "items": [block.text]})
+                continue
+
+            block_type = "paragraph"
+            if style_name.startswith("heading 1") or style_name.startswith("titre 1"):
+                block_type = "heading_1"
+            elif style_name.startswith("heading 2") or style_name.startswith("titre 2"):
+                block_type = "heading_2"
+            elif style_name.startswith("heading 3") or style_name.startswith("titre 3"):
+                block_type = "heading_3"
+            elif style_name.startswith("heading 4") or style_name.startswith("titre 4"):
+                block_type = "heading_4"
+            elif style_name.startswith("heading 5") or style_name.startswith("titre 5"):
+                block_type = "heading_5"
+            elif style_name.startswith("heading 6") or style_name.startswith("titre 6"):
+                block_type = "heading_6"
+
+            if block.text.strip():
+                runs_data = []
+                for run in block.runs:
+                    if run.text.strip():
+                        runs_data.append(
+                            {"text": run.text, "style": _extraire_style_run(run)}
+                        )
+
+                if runs_data:
+                    contenu_structure.append({"type": block_type, "runs": runs_data})
+
+        elif isinstance(block, Table):
+            table_data: List[List[str]] = []
+            for row in block.rows:
+                row_data = [cell.text for cell in row.cells]
+                table_data.append(row_data)
+            if table_data:
+                contenu_structure.append({"type": "table", "rows": table_data})
+
+    return contenu_structure
+
+
 def analyser_docx(
     file_stream,
-) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
-    """Extrait le contenu structuré d'un DOCX avec les styles associés.
+) -> Tuple[Dict[str, List[Dict[str, Any]]], Optional[Dict[str, Any]]]:
+    """Analyse un fichier DOCX et retourne la structure de son en-tête, corps et pied de page."""
 
-    Retourne ``(structure, None)`` où ``structure`` contient trois clés :
-    ``body`` pour la structure principale du document, ``header`` et ``footer``
-    pour les textes des en-têtes et pieds de page.
-    """
     try:
         file_stream.seek(0)
         document = docx.Document(file_stream)
 
-        def iter_block_items(parent):
-            """Yield paragraph and table objects in *parent* in document order."""
-            for child in parent.element.body.iterchildren():
-                if isinstance(child, CT_P):
-                    yield Paragraph(child, parent)
-                elif isinstance(child, CT_Tbl):
-                    yield Table(child, parent)
+        corps_structure = _analyser_contenu_block(document)
 
-        contenu_structure: List[Dict[str, Any]] = []
-        for block in iter_block_items(document):
-            if isinstance(block, Paragraph):
-                style_name = (
-                    block.style.name.lower() if block.style and block.style.name else ""
-                )
-                if "list" in style_name or "liste" in style_name:
-                    if block.text.strip():
-                        if contenu_structure and contenu_structure[-1]["type"] == "list":
-                            contenu_structure[-1]["items"].append(block.text)
-                        else:
-                            contenu_structure.append({"type": "list", "items": [block.text]})
-                    continue
-
-                block_type = "paragraph"
-                if style_name.startswith("heading 1") or style_name.startswith("titre 1"):
-                    block_type = "heading_1"
-                elif style_name.startswith("heading 2") or style_name.startswith("titre 2"):
-                    block_type = "heading_2"
-                elif style_name.startswith("heading 3") or style_name.startswith("titre 3"):
-                    block_type = "heading_3"
-                elif style_name.startswith("heading 4") or style_name.startswith("titre 4"):
-                    block_type = "heading_4"
-                elif style_name.startswith("heading 5") or style_name.startswith("titre 5"):
-                    block_type = "heading_5"
-                elif style_name.startswith("heading 6") or style_name.startswith("titre 6"):
-                    block_type = "heading_6"
-
-                if block.text.strip():
-                    runs_data = []
-                    for run in block.runs:
-                        if run.text.strip():
-                            runs_data.append(
-                                {
-                                    "text": run.text,
-                                    "style": _extraire_style_run(run),
-                                }
-                            )
-
-                    if runs_data:
-                        contenu_structure.append({"type": block_type, "runs": runs_data})
-
-            elif isinstance(block, Table):
-                table_data: List[List[str]] = []
-                for row in block.rows:
-                    row_data = [cell.text for cell in row.cells]
-                    table_data.append(row_data)
-                if table_data:
-                    contenu_structure.append({"type": "table", "rows": table_data})
-
-        contenu_header = ""
-        contenu_footer = ""
-        for section in document.sections:
+        header_structure: List[Dict[str, Any]] = []
+        footer_structure: List[Dict[str, Any]] = []
+        if document.sections:
+            section = document.sections[0]
             if section.header:
-                contenu_header += "\n".join(
-                    p.text for p in section.header.paragraphs if p.text
-                )
+                header_structure = _analyser_contenu_block(section.header)
             if section.footer:
-                contenu_footer += "\n".join(
-                    p.text for p in section.footer.paragraphs if p.text
-                )
+                footer_structure = _analyser_contenu_block(section.footer)
 
-        return {
-            "body": contenu_structure,
-            "header": contenu_header,
-            "footer": contenu_footer,
-        }, None
+        document_complet = {
+            "header": header_structure,
+            "body": corps_structure,
+            "footer": footer_structure,
+        }
+
+        return document_complet, None
 
     except OpcError as e:
         logging.error(
             f"Erreur de parsing du fichier DOCX (potentiellement corrompu) : {e}"
         )
-        return {"body": [], "header": "", "footer": ""}, None
+        return {"body": [], "header": [], "footer": []}, None
     except Exception as e:  # Garde un filet de sécurité
         logging.error(
             f"Erreur inattendue lors de l'analyse du DOCX : {e}", exc_info=True
         )
-        return {"body": [], "header": "", "footer": ""}, None
+        return {"body": [], "header": [], "footer": []}, None
 
 
 def analyser_pdf(file_stream) -> Tuple[str, None]:

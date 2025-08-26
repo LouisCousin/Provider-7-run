@@ -151,35 +151,41 @@ def formater_contenu_en_texte(contenu: Union[List[Dict[str, Any]], Dict[str, Any
 
     if isinstance(contenu, dict):
         body = contenu.get("body", [])
-        header = contenu.get("header", "")
-        footer = contenu.get("footer", "")
+        header = contenu.get("header", [])
+        footer = contenu.get("footer", [])
     else:
         body = contenu
-        header = ""
-        footer = ""
+        header = []
+        footer = []
+
+    def ajouter_blocs(blocs: List[Dict[str, Any]]) -> List[str]:
+        lignes: List[str] = []
+        for bloc in blocs:
+            bloc_type = bloc.get("type", "")
+            if bloc_type.startswith("heading"):
+                niveau = bloc_type.split("_")[-1]
+                texte = "".join(run.get("text", "") for run in bloc.get("runs", []))
+                lignes.append(f"{'#' * int(niveau)} {texte}")
+            elif bloc_type == "paragraph":
+                texte = "".join(run.get("text", "") for run in bloc.get("runs", []))
+                lignes.append(texte)
+            elif bloc_type == "list":
+                for item in bloc.get("items", []):
+                    lignes.append(f"* {item}")
+            elif bloc_type == "table":
+                for ligne in bloc.get("rows", []):
+                    lignes.append(" | ".join(ligne))
+        return lignes
 
     lignes_texte: List[str] = []
     if header:
         lignes_texte.append("=== HEADER ===")
-        lignes_texte.append(header)
-    for bloc in body:
-        bloc_type = bloc.get("type", "")
-        if bloc_type.startswith("heading"):
-            niveau = bloc_type.split("_")[-1]
-            texte_complet = "".join(run.get("text", "") for run in bloc.get("runs", []))
-            lignes_texte.append(f"{'#' * int(niveau)} {texte_complet}")
-        elif bloc_type == "paragraph":
-            texte_complet = "".join(run.get("text", "") for run in bloc.get("runs", []))
-            lignes_texte.append(texte_complet)
-        elif bloc_type == "list":
-            for item in bloc.get("items", []):
-                lignes_texte.append(f"* {item}")
-        elif bloc_type == "table":
-            for ligne in bloc.get("rows", []):
-                lignes_texte.append(" | ".join(ligne))
+        lignes_texte.extend(ajouter_blocs(header))
+    lignes_texte.extend(ajouter_blocs(body))
     if footer:
         lignes_texte.append("=== FOOTER ===")
-        lignes_texte.append(footer)
+        lignes_texte.extend(ajouter_blocs(footer))
+
     return "\n".join(lignes_texte)
 
 
@@ -482,11 +488,10 @@ if uploaded_file is not None:
     if isinstance(document_content, dict):
         json_structure_str = json.dumps(document_content, ensure_ascii=False, indent=2)
         prompt_final = (
-            "Ta tâche est de traduire le contenu textuel d'un document structuré en JSON.\n"
-            f"Instruction de l'utilisateur : \"{user_instruction}\"\n"
-            "Ne modifie AUCUNE clé ni la structure du JSON. Traduis uniquement les valeurs associées à la clé 'text'.\n"
-            "Retourne UNIQUEMENT le JSON traduit, sans aucun commentaire.\n\n"
-            f"JSON à traduire :\n{json_structure_str}"
+            "INSTRUCTION : Traduis les valeurs textuelles associées à la clé 'text' dans la structure JSON ci-dessous.\n"
+            "RÈGLE IMPORTANTE : Tu dois impérativement conserver la structure JSON exacte (clés 'header', 'body', 'footer', 'type', 'runs', 'style', etc.).\n"
+            "RÈGLE IMPORTANTE : Ta réponse doit être uniquement et exclusivement le JSON traduit.\n\n"
+            f"JSON À TRADUIRE:\n{json_structure_str}"
         )
         prompt_text = user_instruction
         if not template_styles:
@@ -612,8 +617,8 @@ if generate_button:
                                     "runs": [{"text": response, "style": None}],
                                 }
                             ],
-                            "header": "",
-                            "footer": "",
+                            "header": [],
+                            "footer": [],
                         }
 
                 with st.container():
