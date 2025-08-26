@@ -12,6 +12,7 @@ Version simplifiée avec support pour:
 
 import streamlit as st
 import os
+import json
 from datetime import datetime
 from typing import Optional, List, Dict
 from dataclasses import asdict
@@ -452,33 +453,50 @@ uploaded_file = st.file_uploader(
 
 prompt_final = user_instruction
 prompt_text = user_instruction
+contenu_structure = None
 
 if uploaded_file is not None:
     contenu_structure, template_styles = importer.analyser_document(uploaded_file)
-    texte_a_traiter = (
-        formater_contenu_en_texte(contenu_structure)
-        if isinstance(contenu_structure, list)
-        else contenu_structure
-    )
     st.session_state.source_template_styles = template_styles
-    prompt_final = (
-        "Voici une instruction à appliquer sur le contenu d'un document.\n\n"
-        f'Instruction de l\'utilisateur : "{user_instruction}"\n\n'
-        "Contenu du document à analyser :\n"
-        f"{texte_a_traiter}\n"
-    )
-    prompt_text = user_instruction
-    if not template_styles:
-        prompt_final += (
-            "\n\n---\nInstruction de formatage : Structure ta réponse finale en utilisant la syntaxe Markdown."
+
+    if isinstance(contenu_structure, list):
+        json_structure_str = json.dumps(contenu_structure, ensure_ascii=False, indent=2)
+        prompt_final = (
+            "Ta tâche est de traduire le contenu textuel d'un document structuré en JSON.\n"
+            f"Instruction de l'utilisateur : \"{user_instruction}\"\n"
+            "Ne modifie AUCUNE clé ni la structure du JSON. Traduis uniquement les valeurs associées à la clé 'text'.\n"
+            "Retourne UNIQUEMENT le JSON traduit, sans aucun commentaire.\n\n"
+            f"JSON à traduire :\n{json_structure_str}"
         )
-        st.warning(
-            "⚠️ Style du document non détecté. La réponse sera formatée avec les styles par défaut."
-        )
+        prompt_text = user_instruction
+        if not template_styles:
+            st.warning(
+                "⚠️ Style du document non détecté. La réponse sera formatée avec les styles par défaut."
+            )
+        else:
+            st.info(
+                "💡 Style du document source détecté. La mise en forme sera conservée au mieux."
+            )
     else:
-        st.info(
-            "💡 Style du document source détecté. La mise en forme sera conservée au mieux."
+        texte_a_traiter = contenu_structure
+        prompt_final = (
+            "Voici une instruction à appliquer sur le contenu d'un document.\n\n"
+            f'Instruction de l\'utilisateur : "{user_instruction}"\n\n'
+            "Contenu du document à analyser :\n"
+            f"{texte_a_traiter}\n"
         )
+        prompt_text = user_instruction
+        if not template_styles:
+            prompt_final += (
+                "\n\n---\nInstruction de formatage : Structure ta réponse finale en utilisant la syntaxe Markdown."
+            )
+            st.warning(
+                "⚠️ Style du document non détecté. La réponse sera formatée avec les styles par défaut."
+            )
+        else:
+            st.info(
+                "💡 Style du document source détecté. La mise en forme sera conservée au mieux."
+            )
 else:
     st.session_state.source_template_styles = None
 
@@ -559,9 +577,25 @@ if generate_button:
                 # Afficher la réponse
                 st.success("✅ Réponse générée avec succès!")
 
+                reponse_structuree = None
+                if uploaded_file is not None and isinstance(contenu_structure, list):
+                    try:
+                        reponse_structuree = json.loads(response)
+                    except json.JSONDecodeError:
+                        st.error(
+                            "L'IA n'a pas retourné une structure valide. Affichage de la réponse brute."
+                        )
+                        reponse_structuree = [
+                            {"type": "paragraph", "runs": [{"text": response, "style": None}]}
+                        ]
+
                 with st.container():
                     st.markdown("### 🤖 Réponse")
-                    st.write(response)
+                    if reponse_structuree:
+                        texte_affiche = formater_contenu_en_texte(reponse_structuree)
+                        st.write(texte_affiche)
+                    else:
+                        st.write(response)
 
                     # Métadonnées
                     col1, col2, col3 = st.columns(3)
@@ -574,6 +608,26 @@ if generate_button:
                             st.caption(f"Temperature: {temperature}")
                     with col3:
                         st.caption(f"Tokens max: {max_tokens}")
+
+                    if reponse_structuree:
+                        styles_interface = {
+                            "response": {
+                                "font_name": reponse_font,
+                                "font_size": reponse_size,
+                                "font_color_rgb": hex_to_rgb(reponse_color),
+                                "is_bold": reponse_bold,
+                                "is_italic": reponse_italic,
+                            }
+                        }
+                        buffer = exporter.generer_export_docx(
+                            reponse_structuree, styles_interface
+                        )
+                        st.download_button(
+                            "⬇️ Export DOCX",
+                            data=buffer.getvalue(),
+                            file_name="traduction.docx",
+                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        )
 
                 # Option de copie
                 st.code(response, language=None)
@@ -711,7 +765,7 @@ with st.expander("Suivi des lots (Batches)"):
                                 },
                             }
                             template_source = st.session_state.get('source_template_styles')
-                            buffer = exporter.generer_export_docx(
+                            buffer = exporter.generer_export_docx_batch(
                                 results_export, styles_interface, template_source
                             )
                             st.download_button(

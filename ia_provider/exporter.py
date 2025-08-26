@@ -207,7 +207,7 @@ class MarkdownToDocxConverter:
 
             self.doc.add_paragraph(text)
 
-def generer_export_docx(
+def generer_export_docx_batch(
     resultats: List[Any],
     styles_interface: Dict[str, Dict[str, Any]],
     template_source: Optional[Dict[str, Any]] = None,
@@ -293,6 +293,83 @@ def generer_export_docx(
 
     output = io.BytesIO()
     converter.doc.save(output)
+    output.seek(0)
+    return output
+
+
+def _appliquer_style_run(run: Run, style: Dict[str, Any] | None, base_style: Dict[str, Any]) -> None:
+    """Applique le style combiné au run."""
+    style_combined = {**base_style, **(style or {})}
+
+    font_name = style_combined.get("font_name")
+    if font_name:
+        run.font.name = font_name
+        run._element.rPr.rFonts.set(qn("w:eastAsia"), font_name)
+    if size := style_combined.get("font_size"):
+        try:
+            run.font.size = Pt(int(size))
+        except Exception:
+            pass
+    if color := style_combined.get("font_color_rgb"):
+        try:
+            if isinstance(color, str):
+                if color.startswith("RGBColor"):
+                    parts = color[color.find("(") + 1 : color.find(")")].split(",")
+                    rgb = [int(p.strip().replace("0x", ""), 16) for p in parts]
+                    run.font.color.rgb = RGBColor(*rgb)
+                else:
+                    run.font.color.rgb = RGBColor.from_string(color)
+            else:
+                run.font.color.rgb = RGBColor(*color)
+        except Exception:
+            pass
+    run.bold = style_combined.get("is_bold", False)
+    run.italic = style_combined.get("is_italic", False)
+
+
+def generer_export_docx(
+    reponse_structuree: List[Dict[str, Any]],
+    styles_interface: Dict[str, Dict[str, Any]],
+) -> io.BytesIO:
+    """Reconstruit un document DOCX à partir d'une structure de blocs et de runs."""
+
+    document = Document()
+    base_style = styles_interface.get("response", {})
+
+    for bloc in reponse_structuree:
+        type_bloc = bloc.get("type", "paragraph")
+
+        if type_bloc == "list":
+            for item in bloc.get("items", []):
+                document.add_paragraph(item, style="List Bullet")
+            continue
+
+        if type_bloc == "table":
+            rows = bloc.get("rows", [])
+            if rows:
+                table = document.add_table(rows=len(rows), cols=len(rows[0]))
+                for r_idx, row in enumerate(rows):
+                    for c_idx, cell_text in enumerate(row):
+                        p = table.cell(r_idx, c_idx).paragraphs[0]
+                        run = p.add_run(cell_text)
+                        _appliquer_style_run(run, None, base_style)
+            continue
+
+        if type_bloc.startswith("heading"):
+            try:
+                level = int(type_bloc.split("_")[-1])
+            except Exception:
+                level = 1
+            p = document.add_heading(level=level)
+        else:
+            p = document.add_paragraph()
+
+        for run_data in bloc.get("runs", []):
+            run = p.add_run(run_data.get("text", ""))
+            _appliquer_style_run(run, run_data.get("style"), base_style)
+
+    output = io.BytesIO()
+    document.save(output)
     output.seek(0)
     return output
 
