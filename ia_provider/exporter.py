@@ -327,16 +327,42 @@ def _appliquer_style_run(run: Run, style: Dict[str, Any] | None, base_style: Dic
     run.italic = style_combined.get("is_italic", False)
 
 
+def _inserer_table_des_matieres(document: Document) -> None:
+    """Insère un champ de table des matières au début du document."""
+    paragraph = document.add_paragraph()
+    run = paragraph.add_run()
+    fld_char = OxmlElement("w:fldChar")
+    fld_char.set(qn("w:fldCharType"), "begin")
+    run._r.append(fld_char)
+
+    run = paragraph.add_run()
+    instr_text = OxmlElement("w:instrText")
+    instr_text.set(qn("xml:space"), "preserve")
+    instr_text.text = 'TOC \\o "1-3" \\h \\z \\u'
+    run._r.append(instr_text)
+
+    run = paragraph.add_run()
+    fld_char = OxmlElement("w:fldChar")
+    fld_char.set(qn("w:fldCharType"), "end")
+    run._r.append(fld_char)
+
+    document._body._element.insert(0, paragraph._p)
+
+
 def generer_export_docx(
-    reponse_structuree: List[Dict[str, Any]],
+    reponse_structuree: Dict[str, Any],
     styles_interface: Dict[str, Dict[str, Any]],
 ) -> io.BytesIO:
-    """Reconstruit un document DOCX à partir d'une structure de blocs et de runs."""
+    """Reconstruit un document DOCX à partir d'une structure de blocs et de runs.
+
+    ``reponse_structuree`` doit contenir les clés ``body``, ``header`` et ``footer``.
+    """
 
     document = Document()
     base_style = styles_interface.get("response", {})
 
-    for bloc in reponse_structuree:
+    body = reponse_structuree.get("body", [])
+    for bloc in body:
         type_bloc = bloc.get("type", "paragraph")
 
         if type_bloc == "list":
@@ -367,6 +393,27 @@ def generer_export_docx(
         for run_data in bloc.get("runs", []):
             run = p.add_run(run_data.get("text", ""))
             _appliquer_style_run(run, run_data.get("style"), base_style)
+
+    header_text = reponse_structuree.get("header")
+    footer_text = reponse_structuree.get("footer")
+    if header_text:
+        for section in document.sections:
+            paragraph = (
+                section.header.paragraphs[0]
+                if section.header.paragraphs
+                else section.header.add_paragraph()
+            )
+            paragraph.text = header_text
+    if footer_text:
+        for section in document.sections:
+            paragraph = (
+                section.footer.paragraphs[0]
+                if section.footer.paragraphs
+                else section.footer.add_paragraph()
+            )
+            paragraph.text = footer_text
+
+    _inserer_table_des_matieres(document)
 
     output = io.BytesIO()
     document.save(output)

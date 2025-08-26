@@ -36,13 +36,12 @@ def _extraire_style_run(run) -> Dict[str, Any]:
 
 def analyser_docx(
     file_stream,
-) -> Tuple[List[Dict[str, Any]], Optional[Dict[str, Any]]]:
+) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
     """Extrait le contenu structuré d'un DOCX avec les styles associés.
 
-    Retourne ``(contenu_structure, None)`` où ``contenu_structure`` est une liste de
-    dictionnaires décrivant chaque bloc du document. Les paragraphes et titres ne
-    contiennent plus un simple texte, mais une liste de ``runs`` avec leur style
-    associé.
+    Retourne ``(structure, None)`` où ``structure`` contient trois clés :
+    ``body`` pour la structure principale du document, ``header`` et ``footer``
+    pour les textes des en-têtes et pieds de page.
     """
     try:
         file_stream.seek(0)
@@ -106,18 +105,34 @@ def analyser_docx(
                 if table_data:
                     contenu_structure.append({"type": "table", "rows": table_data})
 
-        return contenu_structure, None
+        contenu_header = ""
+        contenu_footer = ""
+        for section in document.sections:
+            if section.header:
+                contenu_header += "\n".join(
+                    p.text for p in section.header.paragraphs if p.text
+                )
+            if section.footer:
+                contenu_footer += "\n".join(
+                    p.text for p in section.footer.paragraphs if p.text
+                )
+
+        return {
+            "body": contenu_structure,
+            "header": contenu_header,
+            "footer": contenu_footer,
+        }, None
 
     except OpcError as e:
         logging.error(
             f"Erreur de parsing du fichier DOCX (potentiellement corrompu) : {e}"
         )
-        return [], None
+        return {"body": [], "header": "", "footer": ""}, None
     except Exception as e:  # Garde un filet de sécurité
         logging.error(
             f"Erreur inattendue lors de l'analyse du DOCX : {e}", exc_info=True
         )
-        return [], None
+        return {"body": [], "header": "", "footer": ""}, None
 
 
 def analyser_pdf(file_stream) -> Tuple[str, None]:
@@ -130,7 +145,7 @@ def analyser_pdf(file_stream) -> Tuple[str, None]:
 
 def analyser_document(
     fichier,
-) -> Tuple[Union[str, List[Dict[str, Any]]], Optional[Dict[str, Any]]]:
+) -> Tuple[Union[str, Dict[str, Any]], Optional[Dict[str, Any]]]:
     """Analyse un fichier importé et choisit la méthode appropriée."""
     filename = fichier.name.lower()
     if filename.endswith(".docx"):
