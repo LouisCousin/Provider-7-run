@@ -1,21 +1,21 @@
-"""Outils d'exportation des résultats de batch en document DOCX."""
-
 from __future__ import annotations
 
 import io
 import json
-from dataclasses import asdict, is_dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Union
 
-import markdown as md
-from bs4 import BeautifulSoup
-from bs4.element import NavigableString, Tag
 from docx import Document
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.opc.constants import RELATIONSHIP_TYPE as RT
 from docx.shared import Pt, RGBColor
+from docx.text.paragraph import Paragraph
+from docx.table import Table, _Cell
+from docx.section import _Header, _Footer
+from docx.opc.constants import RELATIONSHIP_TYPE as RT
 from docx.text.run import Run
+import markdown as md
+from bs4 import BeautifulSoup
+from bs4.element import NavigableString, Tag
 
 
 class MarkdownToDocxConverter:
@@ -207,218 +207,91 @@ class MarkdownToDocxConverter:
 
             self.doc.add_paragraph(text)
 
-def generer_export_docx_batch(
-    resultats: List[Any],
-    styles_interface: Dict[str, Dict[str, Any]],
-    template_source: Optional[Dict[str, Any]] = None,
-) -> io.BytesIO:
-    """Génère un document DOCX à partir d'une liste de résultats de batch.
+# ===== NOUVELLE LOGIQUE DE RECONSTRUCTION STRUCTURÉE =====
 
-    ``styles_interface`` correspond aux styles définis dans l'interface.
-    ``template_source`` peut contenir des styles extraits d'un document importé
-    et est prioritaire sur ``styles_interface`` lorsqu'il est fourni. Lorsque
-    ``template_source`` est ``None``, les styles de l'interface servent de
-    solution de repli.
+def _appliquer_style_run(run, style: Dict):
+    """Applique un dictionnaire de style à un objet Run."""
+    if not style:
+        return
+    run.bold = style.get("is_bold")
+    run.italic = style.get("is_italic")
+    if style.get("font_name"):
+        run.font.name = style["font_name"]
+    if style.get("font_size"):
+        run.font.size = Pt(int(style["font_size"]))
+    if style.get("font_color_rgb"):
+        try:
+            run.font.color.rgb = RGBColor.from_string(style["font_color_rgb"])
+        except ValueError:
+            pass  # Ignore les couleurs mal formatées
 
-    Chaque résultat doit contenir au minimum les champs ``status``,
-    ``prompt_text`` et ``clean_response`` (ou ``response``).
-    """
 
+def _reconstruire_blocs(parent: Union[Document, _Header, _Footer, _Cell], blocs_structure: List[Dict]):
+    """Peuple un conteneur (document, header, etc.) avec le contenu structuré."""
+    for bloc in blocs_structure:
+        type_bloc = bloc.get("type", "paragraph")
+
+        if type_bloc.startswith("heading"):
+            niveau = int(type_bloc.split("_")[-1])
+            p = parent.add_heading(level=niveau)
+        elif type_bloc == "list":
+            for item in bloc.get("items", []):
+                parent.add_paragraph(item, style='List Bullet')
+            continue
+        elif type_bloc == "table":
+            table_data = bloc.get("rows", [])
+            if table_data:
+                table = parent.add_table(rows=len(table_data), cols=len(table_data[0]))
+                for i, row_data in enumerate(table_data):
+                    for j, cell_structure in enumerate(row_data):
+                        _reconstruire_blocs(table.cell(i, j), cell_structure)
+            continue
+        else:  # paragraph
+            p = parent.add_paragraph()
+
+        for run_data in bloc.get("runs", []):
+            run = p.add_run(run_data.get("text", ""))
+            _appliquer_style_run(run, run_data.get("style"))
+
+
+def generer_export_docx(document_structure: Dict, styles_interface: Dict) -> io.BytesIO:
+    """Génère un DOCX à partir d'une structure de document complète."""
     document = Document()
-    styles = template_source if template_source is not None else styles_interface
-    converter = MarkdownToDocxConverter(document, styles)
 
-    succeeded: List[Dict[str, Any]] = []
-    failed: List[Dict[str, Any]] = []
+    # 1. Reconstruire l'en-tête et le pied de page
+    if document_structure.get("header"):
+        _reconstruire_blocs(document.sections[0].header, document_structure["header"])
+    if document_structure.get("footer"):
+        _reconstruire_blocs(document.sections[0].footer, document_structure["footer"])
 
-    for res in resultats:
-        data = asdict(res) if is_dataclass(res) else dict(res)
-        if data.get("status") == "succeeded":
-            succeeded.append(data)
-        else:
-            failed.append(data)
+    # 2. Insérer la Table des Matières
+    p_tdm = document.add_paragraph()
+    run = p_tdm.add_run()
+    fldChar = OxmlElement('w:fldChar')
+    fldChar.set(qn('w:fldCharType'), 'begin')
+    run._r.append(fldChar)
+    instrText = OxmlElement('w:instrText')
+    instrText.set(qn('xml:space'), 'preserve')
+    instrText.text = 'TOC \\o "1-3" \\h \\z \\u'
+    run._r.append(instrText)
+    fldChar = OxmlElement('w:fldChar')
+    fldChar.set(qn('w:fldCharType'), 'end')
+    run._r.append(fldChar)
 
-    # Section principale : prompts et réponses
-    for item in succeeded:
-        prompt_text = item.get("prompt_text", "")
-        para = converter.doc.add_paragraph()
-        run = para.add_run(prompt_text)
-        converter._apply_style(run, style_name="prompt")
-
-        reponse_structuree = item.get("structured_response")
-        if reponse_structuree:
-            for bloc in reponse_structuree:
-                bloc_type = bloc.get("type", "paragraph")
-                if bloc_type == "list":
-                    for li in bloc.get("items", []):
-                        converter.doc.add_paragraph(li, style="List Bullet")
-                    continue
-                if bloc_type == "table":
-                    rows = bloc.get("rows", [])
-                    if rows:
-                        table = converter.doc.add_table(rows=len(rows), cols=len(rows[0]))
-                        for r_idx, row in enumerate(rows):
-                            for c_idx, cell_text in enumerate(row):
-                                p = table.cell(r_idx, c_idx).paragraphs[0]
-                                r = p.add_run(cell_text)
-                                converter._apply_style(r)
-                    continue
-
-                if bloc_type.startswith("heading_"):
-                    level = int(bloc_type.split("_")[-1])
-                    p = converter.doc.add_heading(level=level)
-                else:
-                    p = converter.doc.add_paragraph()
-
-                for run_data in bloc.get("runs", []):
-                    r = p.add_run(run_data.get("text", ""))
-                    converter._apply_style(r, run_data.get("style"), style_name="response")
-        else:
-            response_text = item.get("clean_response") or item.get("response", "")
-            converter.add_markdown(response_text)
-
-        converter.doc.add_paragraph()
-
-    # Section annexe pour les erreurs
-    if failed:
-        converter.doc.add_page_break()
-        converter.doc.add_heading("Annexe - Requêtes échouées", level=1)
-        for item in failed:
-            title = item.get("prompt_text") or item.get("custom_id")
-            converter.doc.add_paragraph(title, style="List Bullet")
-            err = item.get("error")
-            if isinstance(err, dict):
-                err = json.dumps(err, ensure_ascii=False, indent=2)
-            converter.doc.add_paragraph(str(err))
+    # 3. Reconstruire le corps du document
+    _reconstruire_blocs(document, document_structure.get("body", []))
 
     output = io.BytesIO()
-    converter.doc.save(output)
+    document.save(output)
     output.seek(0)
     return output
 
 
-def _appliquer_style_run(run: Run, style: Dict[str, Any] | None, base_style: Dict[str, Any]) -> None:
-    """Applique le style combiné au run."""
-    style_combined = {**base_style, **(style or {})}
-
-    font_name = style_combined.get("font_name")
-    if font_name:
-        run.font.name = font_name
-        run._element.rPr.rFonts.set(qn("w:eastAsia"), font_name)
-    if size := style_combined.get("font_size"):
-        try:
-            run.font.size = Pt(int(size))
-        except Exception:
-            pass
-    if color := style_combined.get("font_color_rgb"):
-        try:
-            if isinstance(color, str):
-                if color.startswith("RGBColor"):
-                    parts = color[color.find("(") + 1 : color.find(")")].split(",")
-                    rgb = [int(p.strip().replace("0x", ""), 16) for p in parts]
-                    run.font.color.rgb = RGBColor(*rgb)
-                else:
-                    run.font.color.rgb = RGBColor.from_string(color)
-            else:
-                run.font.color.rgb = RGBColor(*color)
-        except Exception:
-            pass
-    run.bold = style_combined.get("is_bold", False)
-    run.italic = style_combined.get("is_italic", False)
-
-
-def _reconstruire_bloc(parent, bloc: Dict[str, Any], base_style: Dict[str, Any]) -> None:
-    """Reconstruit un bloc (paragraphe, liste, tableau, titre) dans le conteneur donné."""
-
-    type_bloc = bloc.get("type", "paragraph")
-
-    if type_bloc == "list":
-        for item in bloc.get("items", []):
-            parent.add_paragraph(item, style="List Bullet")
-        return
-
-    if type_bloc == "table":
-        rows = bloc.get("rows", [])
-        if rows:
-            table = parent.add_table(rows=len(rows), cols=len(rows[0]))
-            for r_idx, row in enumerate(rows):
-                for c_idx, cell_text in enumerate(row):
-                    p = table.cell(r_idx, c_idx).paragraphs[0]
-                    run = p.add_run(cell_text)
-                    _appliquer_style_run(run, None, base_style)
-        return
-
-    if type_bloc.startswith("heading"):
-        try:
-            level = int(type_bloc.split("_")[-1])
-        except Exception:
-            level = 1
-        p = parent.add_paragraph(style=f"Heading {level}")
-    else:
-        p = parent.add_paragraph()
-
-    for run_data in bloc.get("runs", []):
-        run = p.add_run(run_data.get("text", ""))
-        _appliquer_style_run(run, run_data.get("style"), base_style)
-
-
-def _inserer_table_des_matieres(document: Document) -> None:
-    """Insère un champ de table des matières avec un titre au début du document."""
-
-    if document.paragraphs:
-        document.paragraphs[0].insert_paragraph_before("Table des Matières", style="Title")
-    else:
-        document.add_paragraph("Table des Matières", style="Title")
-
-    p_champ = document.add_paragraph()
-    run = p_champ.add_run()
-    fld_char = OxmlElement("w:fldChar")
-    fld_char.set(qn("w:fldCharType"), "begin")
-    run._r.append(fld_char)
-
-    run = p_champ.add_run()
-    instr_text = OxmlElement("w:instrText")
-    instr_text.set(qn("xml:space"), "preserve")
-    instr_text.text = 'TOC \\o "1-3" \\h \\z \\u'
-    run._r.append(instr_text)
-
-    run = p_champ.add_run()
-    fld_char = OxmlElement("w:fldChar")
-    fld_char.set(qn("w:fldCharType"), "end")
-    run._r.append(fld_char)
-
-    document._body._element.insert(1, p_champ._p)
-
-
-def generer_export_docx(
-    reponse_structuree: Dict[str, Any],
-    styles_interface: Dict[str, Dict[str, Any]],
-) -> io.BytesIO:
-    """Reconstruit un document DOCX à partir d'une structure de blocs et de runs.
-
-    ``reponse_structuree`` doit contenir les clés ``body``, ``header`` et ``footer``.
-    """
-
+def generer_export_docx_markdown(texte_markdown: str, styles_interface: Dict) -> io.BytesIO:
+    """Génère un DOCX à partir d'un texte Markdown (cas de repli pour PDF/erreurs)."""
     document = Document()
-    base_style = styles_interface.get("response", {})
-
-    header_structure = reponse_structuree.get("header", [])
-    if header_structure:
-        header = document.sections[0].header
-        for bloc in header_structure:
-            _reconstruire_bloc(header, bloc, base_style)
-
-    _inserer_table_des_matieres(document)
-
-    body = reponse_structuree.get("body", [])
-    for bloc in body:
-        _reconstruire_bloc(document, bloc, base_style)
-
-    footer_structure = reponse_structuree.get("footer", [])
-    if footer_structure:
-        footer = document.sections[0].footer
-        for bloc in footer_structure:
-            _reconstruire_bloc(footer, bloc, base_style)
+    converter = MarkdownToDocxConverter(document, styles_interface)
+    converter.add_markdown(texte_markdown)
 
     output = io.BytesIO()
     document.save(output)
