@@ -1,7 +1,4 @@
 from __future__ import annotations
-from __future__ import annotations
-
-import copy
 import io
 import json
 import logging
@@ -211,48 +208,6 @@ class MarkdownToDocxConverter:
             warning_run.font.color.rgb = RGBColor(120, 120, 120)
 
             self.doc.add_paragraph(text)
-
-# ===== NOUVELLE LOGIQUE DE RECONSTRUCTION STRUCTURÉE =====
-
-def reinjecter_texte_traduit(structure_originale: Dict, texte_traduit: str) -> Dict:
-    """Remplace le texte dans la structure originale par le texte traduit."""
-    logging.info("Début de la réinjection du texte traduit.")
-    paragraphes_traduits = texte_traduit.split("\n\n")
-    iter_traduction = iter(paragraphes_traduits)
-    nouvelle_structure = copy.deepcopy(structure_originale)
-
-    def remplacer_contenu(blocs: List[Dict[str, Any]]) -> None:
-        for bloc in blocs:
-            type_bloc = bloc.get("type", "inconnu")
-            if type_bloc == "table":
-                for row in bloc.get("rows", []):
-                    for cell in row:
-                        remplacer_contenu(cell)
-            elif type_bloc == "list":
-                nouveaux_items = []
-                for _ in bloc.get("items", []):
-                    try:
-                        nouveaux_items.append(next(iter_traduction))
-                    except StopIteration:
-                        break
-                bloc["items"] = nouveaux_items
-            elif bloc.get("runs"):
-                try:
-                    paragraphe_suivant = next(iter_traduction)
-                    style = (
-                        bloc["runs"][0].get("style", {}) if bloc.get("runs") else {}
-                    )
-                    bloc["runs"] = [{"text": paragraphe_suivant, "style": style}]
-                except StopIteration:
-                    bloc["runs"] = []
-
-    remplacer_contenu(nouvelle_structure.get("header", []))
-    remplacer_contenu(nouvelle_structure.get("body", []))
-    remplacer_contenu(nouvelle_structure.get("footer", []))
-
-    logging.info("Réinjection terminée.")
-    return nouvelle_structure
-
 
 def _appliquer_style_run(run, style: Dict):
     """Applique un dictionnaire de style à un objet Run."""
