@@ -35,23 +35,26 @@ def _extraire_style_run(run) -> Dict[str, Any]:
 
 
 def _analyser_contenu_block(parent: Union[DocumentObject, _Header, _Footer, _Cell]) -> List[Dict[str, Any]]:
-    """Analyse un conteneur (document, header, cell, etc.) et retourne la structure des blocs."""
+    """Analyse un conteneur (document, header, footer, cell, etc.) et retourne la structure des blocs."""
 
-    # Utilise une fonction interne pour itérer sur les paragraphes et tableaux
-    def iter_block_items(parent_item):
-        if isinstance(parent_item, _Cell):
-            parent_element = parent_item._tc
-        else:
-            parent_element = parent_item.element.body
+    # Nouvelle logique pour récupérer les paragraphes et tables selon le type de parent
+    if hasattr(parent, "element"):
+        def iter_block_items(parent_item):
+            parent_element = parent_item._tc if isinstance(parent_item, _Cell) else parent_item.element.body
+            for child in parent_element.iterchildren():
+                if isinstance(child, CT_P):
+                    yield Paragraph(child, parent_item)
+                elif isinstance(child, CT_Tbl):
+                    yield Table(child, parent_item)
 
-        for child in parent_element.iterchildren():
-            if isinstance(child, CT_P):
-                yield Paragraph(child, parent_item)
-            elif isinstance(child, CT_Tbl):
-                yield Table(child, parent_item)
+        block_items = list(iter_block_items(parent))
+    elif hasattr(parent, "paragraphs"):
+        block_items = parent.paragraphs + parent.tables
+    else:
+        return []
 
     contenu_structure: List[Dict[str, Any]] = []
-    for block in iter_block_items(parent):
+    for block in block_items:
         if isinstance(block, Paragraph):
             if not block.text.strip():
                 continue
