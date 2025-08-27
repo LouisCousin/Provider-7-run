@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 import io
 import json
+import logging
 from typing import Any, Dict, List, Union
 
 from docx import Document
@@ -18,6 +19,8 @@ from docx.text.run import Run
 import markdown as md
 from bs4 import BeautifulSoup
 from bs4.element import NavigableString, Tag
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 
 class MarkdownToDocxConverter:
@@ -213,29 +216,41 @@ class MarkdownToDocxConverter:
 
 def reinjecter_texte_traduit(structure_originale: Dict, texte_traduit: str) -> Dict:
     """Remplace le texte dans la structure originale par le texte traduit."""
+    logging.info("Début de la réinjection du texte traduit.")
     paragraphes_traduits = texte_traduit.split("\n\n")
     iter_traduction = iter(paragraphes_traduits)
     nouvelle_structure = copy.deepcopy(structure_originale)
 
-    def remplacer_runs(blocs: List[Dict[str, Any]]) -> None:
+    def remplacer_contenu(blocs: List[Dict[str, Any]]) -> None:
         for bloc in blocs:
-            if bloc.get("type") == "table":
+            type_bloc = bloc.get("type", "inconnu")
+            if type_bloc == "table":
                 for row in bloc.get("rows", []):
                     for cell in row:
-                        remplacer_runs(cell)
+                        remplacer_contenu(cell)
+            elif type_bloc == "list":
+                nouveaux_items = []
+                for _ in bloc.get("items", []):
+                    try:
+                        nouveaux_items.append(next(iter_traduction))
+                    except StopIteration:
+                        break
+                bloc["items"] = nouveaux_items
             elif bloc.get("runs"):
                 try:
                     paragraphe_suivant = next(iter_traduction)
+                    style = (
+                        bloc["runs"][0].get("style", {}) if bloc.get("runs") else {}
+                    )
+                    bloc["runs"] = [{"text": paragraphe_suivant, "style": style}]
                 except StopIteration:
                     bloc["runs"] = []
-                else:
-                    style = bloc["runs"][0].get("style", {}) if bloc.get("runs") else {}
-                    bloc["runs"] = [{"text": paragraphe_suivant, "style": style}]
 
-    remplacer_runs(nouvelle_structure.get("header", []))
-    remplacer_runs(nouvelle_structure.get("body", []))
-    remplacer_runs(nouvelle_structure.get("footer", []))
+    remplacer_contenu(nouvelle_structure.get("header", []))
+    remplacer_contenu(nouvelle_structure.get("body", []))
+    remplacer_contenu(nouvelle_structure.get("footer", []))
 
+    logging.info("Réinjection terminée.")
     return nouvelle_structure
 
 

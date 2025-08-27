@@ -152,25 +152,59 @@ def analyser_document(
 
 def extraire_texte_de_structure(document_structure: Dict[str, List[Dict[str, Any]]]) -> str:
     """Extrait et concatène tout le texte d'une structure de document."""
+    logging.info("Début de l'extraction de texte depuis la structure.")
+
+    nb_blocs_body = len(document_structure.get("body", []))
+    logging.info(
+        f"Nombre de blocs principaux trouvés dans le corps : {nb_blocs_body}"
+    )
+
+    if nb_blocs_body == 0:
+        logging.warning(
+            "Aucun bloc de contenu trouvé dans la structure du document. L'extraction retournera une chaîne vide."
+        )
+
     texte_complet: List[str] = []
 
-    def extraire_runs(blocs: List[Dict[str, Any]]) -> None:
-        for bloc in blocs:
-            if bloc.get("type") == "table":
+    def extraire_runs(blocs: List[Dict[str, Any]], niveau: int = 0) -> None:
+        for i, bloc in enumerate(blocs):
+            type_bloc = bloc.get("type", "inconnu")
+            logging.info(
+                f"{'  ' * niveau}Traitement du bloc {i+1}/{len(blocs)} de type : {type_bloc}"
+            )
+
+            if type_bloc == "table":
                 for row in bloc.get("rows", []):
                     for cell in row:
-                        extraire_runs(cell)
-            elif bloc.get("type") == "list":
-                for item in bloc.get("items", []):
+                        extraire_runs(cell, niveau + 1)
+            elif type_bloc == "list":
+                items = bloc.get("items", [])
+                logging.info(
+                    f"{'  ' * (niveau+1)}-> Trouvé {len(items)} élément(s) de liste."
+                )
+                for item in items:
                     if item.strip():
                         texte_complet.append(item)
             elif bloc.get("runs"):
-                paragraphe = "".join(run.get("text", "") for run in bloc.get("runs", []))
+                paragraphe = "".join(
+                    run.get("text", "") for run in bloc.get("runs", [])
+                )
                 if paragraphe.strip():
+                    logging.info(
+                        f"{'  ' * (niveau+1)}-> Ajout de {len(paragraphe)} caractères."
+                    )
                     texte_complet.append(paragraphe)
+            else:
+                logging.warning(
+                    f"{'  ' * (niveau+1)}-> Bloc de type '{type_bloc}' ignoré car il ne contient ni 'runs', ni 'items', ni n'est une table."
+                )
 
     extraire_runs(document_structure.get("header", []))
     extraire_runs(document_structure.get("body", []))
     extraire_runs(document_structure.get("footer", []))
 
-    return "\n\n".join(texte_complet)
+    texte_final = "\n\n".join(texte_complet)
+    logging.info(
+        f"Extraction terminée. Longueur totale du texte : {len(texte_final)} caractères."
+    )
+    return texte_final
