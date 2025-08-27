@@ -453,15 +453,13 @@ if uploaded_file is not None:
     # Gérer le cas du DOCX qui retourne un dictionnaire structuré
     elif isinstance(contenu_brut, dict):
         document_structure_pour_export = contenu_brut
-        json_str = json.dumps(contenu_brut, ensure_ascii=False, indent=2)
+        texte_a_traduire = importer.extraire_texte_de_structure(contenu_brut)
 
         prompt_final = (
-            "INSTRUCTION : Tu es un assistant de traduction expert. Tu dois traduire le contenu textuel d'une structure JSON.\n"
-            f"Tâche à effectuer sur le texte : \"{user_instruction}\"\n"
-            "RÈGLE ABSOLUE : Tu dois conserver la structure JSON d'origine (toutes les clés : 'header', 'body', 'footer', 'type', 'runs', 'style', etc.).\n"
-            "RÈGLE ABSOLUE : Ne traduis que les valeurs textuelles associées à la clé 'text' à l'intérieur de chaque 'run'.\n"
-            "RÈGLE ABSOLUE : Ta réponse ne doit contenir QUE le JSON traduit, sans aucun texte ou commentaire avant ou après.\n\n"
-            f"JSON À TRAITER:\n{json_str}"
+            "Tu es un assistant de traduction expert. Traduis le texte suivant en respectant la consigne de l'utilisateur.\n\n"
+            f'Consigne de l\'utilisateur : "{user_instruction}"\n\n'
+            f"TEXTE À TRADUIRE :\n---\n{texte_a_traduire}\n---\n"
+            "RÈGLE ABSOLUE : Ta réponse ne doit contenir QUE le texte traduit, sans aucun commentaire ou texte superflu avant ou après."
         )
 else:
     st.session_state.source_template_styles = None
@@ -558,14 +556,18 @@ if generate_button:
 
                     if isinstance(document_structure_pour_export, dict):
                         try:
-                            reponse_structuree = json.loads(response)
-                            st.json(reponse_structuree)
-                            buffer = exporter.generer_export_docx(
-                                reponse_structuree, styles_interface
+                            structure_traduite = exporter.reinjecter_texte_traduit(
+                                document_structure_pour_export,
+                                response,
                             )
-                        except json.JSONDecodeError:
+                            st.success("Traduction réintégrée dans la structure du document.")
+                            st.write(response)
+                            buffer = exporter.generer_export_docx(
+                                structure_traduite, styles_interface
+                            )
+                        except Exception as e:
                             st.error(
-                                "L'IA n'a pas retourné une structure JSON valide. L'export utilisera une mise en forme basique."
+                                f"Une erreur est survenue lors de la reconstruction du document : {e}"
                             )
                             st.write(response)
                             buffer = exporter.generer_export_docx_markdown(

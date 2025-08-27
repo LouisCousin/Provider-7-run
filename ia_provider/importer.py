@@ -148,3 +148,24 @@ def analyser_document(
     if filename.endswith(".pdf"):
         return analyser_pdf(fichier)
     return "", None
+
+
+def extraire_texte_de_structure(document_structure: Dict[str, List[Dict[str, Any]]]) -> str:
+    """Extrait et concatène tout le texte d'une structure de document."""
+    texte_complet: List[str] = []
+
+    def extraire_runs(blocs: List[Dict[str, Any]]) -> None:
+        for bloc in blocs:
+            if bloc.get("type") == "table":
+                for row in bloc.get("rows", []):
+                    for cell in row:
+                        extraire_runs(cell)
+            elif bloc.get("runs"):
+                paragraphe = "".join(run.get("text", "") for run in bloc.get("runs", []))
+                texte_complet.append(paragraphe)
+
+    extraire_runs(document_structure.get("header", []))
+    extraire_runs(document_structure.get("body", []))
+    extraire_runs(document_structure.get("footer", []))
+
+    return "\n\n".join(texte_complet)

@@ -1,5 +1,7 @@
 from __future__ import annotations
+from __future__ import annotations
 
+import copy
 import io
 import json
 from typing import Any, Dict, List, Union
@@ -208,6 +210,34 @@ class MarkdownToDocxConverter:
             self.doc.add_paragraph(text)
 
 # ===== NOUVELLE LOGIQUE DE RECONSTRUCTION STRUCTURÉE =====
+
+def reinjecter_texte_traduit(structure_originale: Dict, texte_traduit: str) -> Dict:
+    """Remplace le texte dans la structure originale par le texte traduit."""
+    paragraphes_traduits = texte_traduit.split("\n\n")
+    iter_traduction = iter(paragraphes_traduits)
+    nouvelle_structure = copy.deepcopy(structure_originale)
+
+    def remplacer_runs(blocs: List[Dict[str, Any]]) -> None:
+        for bloc in blocs:
+            if bloc.get("type") == "table":
+                for row in bloc.get("rows", []):
+                    for cell in row:
+                        remplacer_runs(cell)
+            elif bloc.get("runs"):
+                try:
+                    paragraphe_suivant = next(iter_traduction)
+                except StopIteration:
+                    bloc["runs"] = []
+                else:
+                    style = bloc["runs"][0].get("style", {}) if bloc.get("runs") else {}
+                    bloc["runs"] = [{"text": paragraphe_suivant, "style": style}]
+
+    remplacer_runs(nouvelle_structure.get("header", []))
+    remplacer_runs(nouvelle_structure.get("body", []))
+    remplacer_runs(nouvelle_structure.get("footer", []))
+
+    return nouvelle_structure
+
 
 def _appliquer_style_run(run, style: Dict):
     """Applique un dictionnaire de style à un objet Run."""
