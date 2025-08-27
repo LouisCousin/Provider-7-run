@@ -715,6 +715,9 @@ with st.expander("Suivi des lots (Batches)"):
                     elif status == 'COMPLETED':
                         results_export = batch_manager.get_results(batch['id'])
                         if results_export:
+                            # On prend la réponse du premier (et unique) résultat du lot
+                            response_text = results_export[0].clean_response
+
                             styles_interface = {
                                 "response": {
                                     "font_name": reponse_font,
@@ -724,13 +727,23 @@ with st.expander("Suivi des lots (Batches)"):
                                     "is_italic": reponse_italic,
                                 }
                             }
-                            contenu_markdown = ""
-                            for res in results_export:
-                                texte = getattr(res, 'clean_response', None) or res.response
-                                contenu_markdown += f"{texte}\n\n"
-                            buffer = exporter.generer_export_docx_markdown(
-                                contenu_markdown, styles_interface
-                            )
+
+                            # Nouvelle logique : Tenter de parser le JSON en priorité
+                            try:
+                                # Essayer de charger la réponse comme une structure JSON
+                                reponse_structuree = json.loads(response_text)
+                                # Si ça réussit, générer le DOCX structuré
+                                buffer = exporter.generer_export_docx(
+                                    reponse_structuree, styles_interface
+                                )
+                                st.success("Le document traduit et formaté est prêt.")
+                            except (json.JSONDecodeError, TypeError):
+                                # Si ce n'est pas un JSON valide, on se rabat sur le mode texte brut
+                                st.warning("La réponse n'était pas une structure valide, export en mode texte.")
+                                buffer = exporter.generer_export_docx_markdown(
+                                    response_text, styles_interface
+                                )
+
                             st.download_button(
                                 "⬇️ Export DOCX",
                                 data=buffer.getvalue(),
