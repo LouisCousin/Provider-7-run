@@ -35,23 +35,23 @@ def _extraire_style_run(run) -> Dict[str, Any]:
 
 
 def _analyser_contenu_block(parent: Union[DocumentObject, _Header, _Footer, _Cell]) -> List[Dict[str, Any]]:
-    """Analyse un conteneur (document, header, footer, cell, etc.) et retourne la structure des blocs."""
+    """Analyse un conteneur (document, header, cell, etc.) et retourne la structure des blocs."""
 
-    # Nouvelle logique pour récupérer les paragraphes et tables selon le type de parent
+    block_items = []
+    # Logique qui s'adapte au type de "parent"
     if hasattr(parent, "element"):
-        def iter_block_items(parent_item):
-            parent_element = parent_item._tc if isinstance(parent_item, _Cell) else parent_item.element.body
-            for child in parent_element.iterchildren():
-                if isinstance(child, CT_P):
-                    yield Paragraph(child, parent_item)
-                elif isinstance(child, CT_Tbl):
-                    yield Table(child, parent_item)
-
-        block_items = list(iter_block_items(parent))
+        # Cas pour le corps du document et les cellules de tableau
+        parent_element = parent._tc if isinstance(parent, _Cell) else parent.element.body
+        for child in parent_element.iterchildren():
+            if isinstance(child, CT_P):
+                block_items.append(Paragraph(child, parent))
+            elif isinstance(child, CT_Tbl):
+                block_items.append(Table(child, parent))
     elif hasattr(parent, "paragraphs"):
-        block_items = parent.paragraphs + parent.tables
-    else:
-        return []
+        # Cas pour les en-têtes (_Header) et pieds de page (_Footer)
+        # Note: L'ordre n'est pas garanti si les paragraphes et tableaux sont mélangés
+        block_items.extend(parent.paragraphs)
+        block_items.extend(parent.tables)
 
     contenu_structure: List[Dict[str, Any]] = []
     for block in block_items:
@@ -63,7 +63,6 @@ def _analyser_contenu_block(parent: Union[DocumentObject, _Header, _Footer, _Cel
 
             # Gestion des listes
             if "list" in style_name or "liste" in style_name:
-                # Si le dernier bloc était déjà une liste, on y ajoute l'item
                 if contenu_structure and contenu_structure[-1]["type"] == "list":
                     contenu_structure[-1]["items"].append(block.text)
                 else:
@@ -76,7 +75,6 @@ def _analyser_contenu_block(parent: Union[DocumentObject, _Header, _Footer, _Cel
                 block_type = "heading_1"
             elif style_name.startswith("heading 2") or style_name.startswith("titre 2"):
                 block_type = "heading_2"
-            # ... (ajouter d'autres niveaux de titre si nécessaire)
 
             runs_data = [_extraire_style_run(run) for run in block.runs if run.text.strip()]
             if runs_data:
